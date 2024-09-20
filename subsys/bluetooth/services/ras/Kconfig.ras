@@ -1,0 +1,18 @@
+#
+# Copyright (c) 2024 Nordic Semiconductor ASA
+#
+# SPDX-License-Identifier: LicenseRef-Nordic-5-Clause
+#
+
+menuconfig BT_RAS
+	bool "Enable GATT ranging service"
+	select EXPERIMENTAL
+	select BT_NRF_SERVICES
+
+if BT_RAS
+
+module = BT_RAS
+module-str = RAS
+source "${ZEPHYR_BASE}/subsys/logging/Kconfig.template.log_config"
+
+endif # BT_RAS
