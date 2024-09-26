@@ -27,9 +27,44 @@ enum ras_att_error {
 	RAS_ATT_ERROR_WRITE_REQ_REJECTED = 0xFC,
 };
 
-ssize_t rrsp_rasp_cmd_handle(struct bt_conn *conn, uint8_t const * command, uint16_t len);
+struct ras_seg_header {
+	bool    first_seg   : 1;
+	bool    last_seg    : 1;
+	uint8_t seg_counter : 6;
+} __packed;
 
-int rrsp_ondemand_rd_notify_or_indicate(struct bt_conn *conn, const void *data, uint16_t len);
-int rrsp_ras_cp_indicate(struct bt_conn *conn, const void *data, uint16_t len);
+struct ras_segment {
+	struct ras_seg_header header;
+	uint8_t               data[];
+} __packed;
+
+struct bt_ras_rrsp {
+	struct bt_conn *conn;
+	struct net_buf_simple *rd_buf;
+	struct k_work send_data_work;
+	struct k_timer data_req_timeout_timer; /* TODO */
+
+	bool streaming; /* TODO: atomic */
+	uint16_t streaming_ranging_counter;
+	uint16_t writing_ranging_counter;
+	uint16_t overwritten_ranging_counter;
+	uint16_t segment_counter;
+
+	uint16_t bytes_sent;
+	uint16_t bytes_written;
+};
+
+struct bt_ras_rrsp *bt_ras_rrsp_find(struct bt_conn *conn);
+
+void rrsp_rascp_cmd_handle(struct bt_conn *conn, struct net_buf_simple *req);
+void rrsp_rascp_send_complete_rd_rsp(struct bt_conn *conn, uint16_t ranging_counter);
+
+int rrsp_ondemand_rd_notify_or_indicate(struct bt_conn *conn, struct net_buf_simple *buf);
+int rrsp_rascp_indicate(struct bt_conn *conn, struct net_buf_simple *rsp);
 int rrsp_rd_ready_indicate(struct bt_conn *conn, uint16_t ranging_counter);
 int rrsp_rd_overwritten_indicate(struct bt_conn *conn, uint16_t ranging_counter);
+
+bool bt_ras_rd_buffer_ranging_counter_check(struct bt_ras_rrsp *rrsp, uint16_t ranging_counter);
+bool bt_ras_rd_buffer_ranging_counter_free(struct bt_ras_rrsp *rrsp, uint16_t ranging_counter);
+int bt_ras_rd_buffer_bytes_left_get(struct bt_ras_rrsp *rrsp);
+int bt_ras_rd_buffer_segment_get(struct bt_ras_rrsp *rrsp, uint8_t * data_out, uint16_t seg_size);

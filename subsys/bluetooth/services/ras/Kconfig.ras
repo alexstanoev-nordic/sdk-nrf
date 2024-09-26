@@ -11,6 +11,17 @@ menuconfig BT_RAS
 
 if BT_RAS
 
+config BT_RAS_AUTO_ALLOC_RRSP_INSTANCE
+	bool "Automatically allocate RRSP instances to new connections"
+	default y
+
+config BT_RAS_MAX_ACTIVE_RRSP
+	int "Number of simultaneously supported RRSP instances"
+	default BT_MAX_CONN
+	range 1 BT_MAX_CONN
+	help
+	  The number of simultaneous connections with an instance of RAS RRSP
+
 module = BT_RAS
 module-str = RAS
 source "${ZEPHYR_BASE}/subsys/logging/Kconfig.template.log_config"
