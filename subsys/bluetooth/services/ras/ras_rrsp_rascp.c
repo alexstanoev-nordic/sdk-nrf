@@ -78,8 +78,7 @@ static void send_rsp_code(struct bt_conn *conn, enum rascp_rsp_code rsp_code)
 
 static void start_streaming(struct bt_ras_rrsp *rrsp, uint16_t ranging_counter)
 {
-	rrsp->bytes_sent = 0;
-	rrsp->streaming_ranging_counter = ranging_counter;
+	rrsp->active_buf = bt_ras_rd_buffer_claim(rrsp->conn, ranging_counter);
 	rrsp->segment_counter = 0;
 	rrsp->streaming = true;
 	k_work_submit(&rrsp->send_data_work);
@@ -87,6 +86,9 @@ static void start_streaming(struct bt_ras_rrsp *rrsp, uint16_t ranging_counter)
 
 void rrsp_rascp_cmd_handle(struct bt_conn *conn, struct net_buf_simple *req)
 {
+	int err;
+	ARG_UNUSED(err);
+
 	uint8_t opcode = net_buf_simple_pull_u8(req);
 	uint8_t param_len = MIN(req->len, RASCP_CMD_PARAMS_MAX_LEN) - RASCP_CMD_OPCODE_LEN;
 
@@ -111,7 +113,13 @@ void rrsp_rascp_cmd_handle(struct bt_conn *conn, struct net_buf_simple *req)
 
 			uint16_t ranging_counter = sys_le16_to_cpu(net_buf_simple_pull_le16(req));
 
-			if (!bt_ras_rd_buffer_ranging_counter_check(rrsp, ranging_counter)) {
+			if (rrsp->active_buf) {
+				/* Disallow getting new ranging data until the current one has been ACKed. */
+				send_rsp_code(conn, RASCP_RESPONSE_SERVER_BUSY);
+				return;
+			}
+
+			if (!bt_ras_rd_buffer_ready_check(conn, ranging_counter)) {
 				send_rsp_code(conn, RASCP_RESPONSE_NO_RECORDS_FOUND);
 				return;
 			}
@@ -132,10 +140,15 @@ void rrsp_rascp_cmd_handle(struct bt_conn *conn, struct net_buf_simple *req)
 
 			uint16_t ranging_counter = sys_le16_to_cpu(net_buf_simple_pull_le16(req));
 
-			if (!bt_ras_rd_buffer_ranging_counter_free(rrsp, ranging_counter)) {
+			if (!rrsp->active_buf || rrsp->active_buf->ranging_counter != ranging_counter) {
+				/* Only allow ACKing the currently requested ranging counter. */
 				send_rsp_code(conn, RASCP_RESPONSE_NO_RECORDS_FOUND);
 				return;
 			}
+
+			err = bt_ras_rd_buffer_release(rrsp->active_buf);
+			__ASSERT_NO_MSG(!err);
+			rrsp->active_buf = NULL;
 
 			send_rsp_code(conn, RASCP_RESPONSE_SUCCESS);
 

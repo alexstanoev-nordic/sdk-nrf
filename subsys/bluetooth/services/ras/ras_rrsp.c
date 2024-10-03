@@ -18,13 +18,13 @@
 
 LOG_MODULE_REGISTER(ras, CONFIG_BT_RAS_LOG_LEVEL);
 
-static struct bt_ras_rrsp m_rrsp_pool[CONFIG_BT_RAS_MAX_ACTIVE_RRSP];
-static uint32_t m_ras_features;
+static struct bt_ras_rrsp rrsp_pool[CONFIG_BT_RAS_MAX_ACTIVE_RRSP];
+static uint32_t ras_features;
 
 static ssize_t ras_features_read(struct bt_conn *conn, const struct bt_gatt_attr *attr,
 				 void *buf, uint16_t len, uint16_t offset)
 {
-	return bt_gatt_attr_read(conn, attr, buf, len, offset, &m_ras_features, sizeof(m_ras_features));
+	return bt_gatt_attr_read(conn, attr, buf, len, offset, &ras_features, sizeof(ras_features));
 }
 
 static ssize_t ras_cp_write(struct bt_conn *conn, struct bt_gatt_attr const *attr,
@@ -100,6 +100,11 @@ static struct bt_conn_cb conn_callbacks = {
 #endif
 };
 
+static struct bt_ras_rd_buffer_cb rd_buffer_callbacks = {
+	.new_ranging_data_received = rrsp_rd_ready_indicate,
+	.ranging_data_overwritten = rrsp_rd_overwritten_indicate,
+};
+
 static int rrsp_chunk_send(struct bt_ras_rrsp *rrsp)
 {
 	int err;
@@ -118,11 +123,13 @@ static int rrsp_chunk_send(struct bt_ras_rrsp *rrsp)
 		return -ENOMEM;
 	}
 
-	uint16_t actual_data_len = bt_ras_rd_buffer_segment_get(rrsp, ras_segment->data, max_data_len);
+	bool first_seg = (rrsp->active_buf->read_cursor == 0);
+	uint16_t actual_data_len = bt_ras_rd_buffer_bytes_pull(rrsp->active_buf, ras_segment->data, max_data_len);
+	bool last_seg = (actual_data_len < max_data_len);
 
 	if (actual_data_len) {
-		ras_segment->header.first_seg = true; /* TODO */
-		ras_segment->header.last_seg = true;
+		ras_segment->header.first_seg = first_seg;
+		ras_segment->header.last_seg = last_seg;
 		ras_segment->header.seg_counter = rrsp->segment_counter & BIT_MASK(6);
 
 		rrsp->segment_counter++;
@@ -139,12 +146,11 @@ static int rrsp_chunk_send(struct bt_ras_rrsp *rrsp)
 		LOG_DBG("Chunk with RSC %d sent", rrsp->segment_counter);
 	}
 
-	uint16_t bytes_left = bt_ras_rd_buffer_bytes_left_get(rrsp);
-	if (bytes_left) {
+	if (!last_seg) {
 		k_work_submit(&rrsp->send_data_work);
 	} else {
 		LOG_DBG("all chunks sent");
-		rrsp_rascp_send_complete_rd_rsp(rrsp->conn, rrsp->streaming_ranging_counter);
+		rrsp_rascp_send_complete_rd_rsp(rrsp->conn, rrsp->active_buf->ranging_counter);
 		rrsp->streaming = false;
 		k_work_cancel(&rrsp->send_data_work);
 	}
@@ -157,7 +163,7 @@ static void send_data_work_handler(struct k_work *work)
 	struct bt_ras_rrsp *rrsp = CONTAINER_OF(work, struct bt_ras_rrsp, send_data_work);
 	LOG_DBG("rrsp %p", rrsp);
 
-	if (!rrsp->streaming) {
+	if (!rrsp->streaming || !rrsp->active_buf) {
 		return;
 	}
 
@@ -171,8 +177,8 @@ static void send_data_work_handler(struct k_work *work)
 
 struct bt_ras_rrsp *bt_ras_rrsp_find(struct bt_conn *conn)
 {
-	for (size_t i = 0; i < ARRAY_SIZE(m_rrsp_pool); i++) {
-		struct bt_ras_rrsp *rrsp = &m_rrsp_pool[i];
+	for (size_t i = 0; i < ARRAY_SIZE(rrsp_pool); i++) {
+		struct bt_ras_rrsp *rrsp = &rrsp_pool[i];
 
 		if (rrsp->conn == conn) {
 			return rrsp;
@@ -190,9 +196,9 @@ int bt_ras_rrsp_alloc(struct bt_conn *conn)
 		return -EALREADY;
 	}
 
-	for (size_t i = 0; i < ARRAY_SIZE(m_rrsp_pool); i++) {
-		if (m_rrsp_pool[i].conn == NULL) {
-			rrsp = &m_rrsp_pool[i];
+	for (size_t i = 0; i < ARRAY_SIZE(rrsp_pool); i++) {
+		if (rrsp_pool[i].conn == NULL) {
+			rrsp = &rrsp_pool[i];
 			break;
 		}
 	}
@@ -229,30 +235,17 @@ void bt_ras_rrsp_free(struct bt_conn *conn)
 	}
 }
 
-int bt_ras_rrsp_subevent_store(struct bt_conn *conn, struct net_buf_simple *subevent_buf)
-{
-	/* TODO: Call bt_ras_rd_buffer_subevent_append */
-	/* TODO: Trigger workqueue to keep feeding data to clients */
-
-	struct bt_ras_rrsp *rrsp = bt_ras_rrsp_find(conn);
-	__ASSERT(rrsp, "Non-existing RRSP");
-
-	// if overwritten: rrsp_rd_overwritten_indicate(conn, 0);
-	// if ready: rrsp_rd_ready_indicate(conn, 1);
-
-	k_work_submit(&rrsp->send_data_work);
-
-	return 0;
-}
-
 int bt_ras_rrsp_init(void)
 {
-	m_ras_features = 0;
+	ras_features = 0;
 #if defined(CONFIG_BT_RAS_REALTIME_RANGING_DATA)
-	m_ras_features |= 1 << RAS_FEAT_REALTIME_RD_BIT;
+	ras_features |= 1 << RAS_FEAT_REALTIME_RD_BIT;
 #endif
 
 	bt_conn_cb_register(&conn_callbacks);
+
+	bt_ras_rd_buffer_init();
+	bt_ras_rd_buffer_cb_register(&rd_buffer_callbacks);
 
 	return 0;
 }
@@ -320,17 +313,6 @@ int rrsp_ondemand_rd_notify_or_indicate(struct bt_conn *conn, struct net_buf_sim
 	__ASSERT_NO_MSG(attr);
 
 	if (bt_gatt_is_subscribed(conn, attr, BT_GATT_CCC_NOTIFY)) {
-		struct bt_gatt_indicate_params params = {0};
-
-		params.attr = attr;
-		params.uuid = NULL;
-		params.data = buf->data;
-		params.len = buf->len;
-		params.func = ondemand_rd_indicate_sent_cb;
-		params.destroy = NULL;
-
-		return bt_gatt_indicate(conn, &params);
-	} else if(bt_gatt_is_subscribed(conn, attr, BT_GATT_CCC_INDICATE)) {
 		struct bt_gatt_notify_params params = {0};
 
 		params.attr = attr;
@@ -339,7 +321,20 @@ int rrsp_ondemand_rd_notify_or_indicate(struct bt_conn *conn, struct net_buf_sim
 		params.len = buf->len;
 		params.func = ondemand_rd_notify_sent_cb;
 
+		/* TODO this can fail if there are no resources in the host */
 		return bt_gatt_notify_cb(conn, &params);
+	} else if(bt_gatt_is_subscribed(conn, attr, BT_GATT_CCC_INDICATE)) {
+		struct bt_ras_rrsp *rrsp = bt_ras_rrsp_find(conn);
+		__ASSERT_NO_MSG(rrsp);
+
+		rrsp->ondemand_ind_params.attr = attr;
+		rrsp->ondemand_ind_params.uuid = NULL;
+		rrsp->ondemand_ind_params.data = buf->data;
+		rrsp->ondemand_ind_params.len = buf->len;
+		rrsp->ondemand_ind_params.func = ondemand_rd_indicate_sent_cb;
+		rrsp->ondemand_ind_params.destroy = NULL; /* TODO */
+
+		return bt_gatt_indicate(conn, &rrsp->ondemand_ind_params);
 	} else {
 		return -EINVAL;
 	}
@@ -351,16 +346,17 @@ int rrsp_rascp_indicate(struct bt_conn *conn, struct net_buf_simple *rsp)
 	__ASSERT_NO_MSG(attr);
 
 	if (bt_gatt_is_subscribed(conn, attr, BT_GATT_CCC_INDICATE)) {
-		struct bt_gatt_indicate_params params = {0};
+		struct bt_ras_rrsp *rrsp = bt_ras_rrsp_find(conn);
+		__ASSERT_NO_MSG(rrsp);
 
-		params.attr = attr;
-		params.uuid = NULL;
-		params.data = rsp->data;
-		params.len = rsp->len;
-		params.func = NULL;
-		params.destroy = NULL;
+		rrsp->rascp_ind_params.attr = attr;
+		rrsp->rascp_ind_params.uuid = NULL;
+		rrsp->rascp_ind_params.data = rsp->data;
+		rrsp->rascp_ind_params.len = rsp->len;
+		rrsp->rascp_ind_params.func = NULL;
+		rrsp->rascp_ind_params.destroy = NULL;
 
-		return bt_gatt_indicate(conn, &params);
+		return bt_gatt_indicate(conn, &rrsp->rascp_ind_params);
 	}
 
 	return -EINVAL;
@@ -374,27 +370,30 @@ static int rd_status_notify_or_indicate(struct bt_conn *conn, const struct bt_uu
 	if (bt_gatt_is_subscribed(conn, attr, BT_GATT_CCC_NOTIFY)) {
 		return bt_gatt_notify(conn, attr, &ranging_counter, sizeof(ranging_counter));
 	} else if(bt_gatt_is_subscribed(conn, attr, BT_GATT_CCC_INDICATE)) {
-		struct bt_gatt_indicate_params params = {0};
+		struct bt_ras_rrsp *rrsp = bt_ras_rrsp_find(conn);
+		__ASSERT_NO_MSG(rrsp);
 
-		params.attr = attr;
-		params.uuid = NULL;
-		params.data = &ranging_counter;
-		params.len = sizeof(ranging_counter);
-		params.func = NULL;
-		params.destroy = NULL;
+		rrsp->rd_status_params.attr = attr;
+		rrsp->rd_status_params.uuid = NULL;
+		rrsp->rd_status_params.data = &ranging_counter;
+		rrsp->rd_status_params.len = sizeof(ranging_counter);
+		rrsp->rd_status_params.func = NULL;
+		rrsp->rd_status_params.destroy = NULL;
 
-		return bt_gatt_indicate(conn, &params);
+		return bt_gatt_indicate(conn, &rrsp->rd_status_params);
 	} else {
 		return -EINVAL;
 	}
 }
 
-int rrsp_rd_ready_indicate(struct bt_conn *conn, uint16_t ranging_counter)
+void rrsp_rd_ready_indicate(struct bt_conn *conn, uint16_t ranging_counter)
 {
-	return rd_status_notify_or_indicate(conn, BT_UUID_RAS_RD_READY, ranging_counter);
+	int err = rd_status_notify_or_indicate(conn, BT_UUID_RAS_RD_READY, ranging_counter);
+	ARG_UNUSED(err); /* TODO */
 }
 
-int rrsp_rd_overwritten_indicate(struct bt_conn *conn, uint16_t ranging_counter)
+void rrsp_rd_overwritten_indicate(struct bt_conn *conn, uint16_t ranging_counter)
 {
-	return rd_status_notify_or_indicate(conn, BT_UUID_RAS_RD_OVERWRITTEN, ranging_counter);
+	int err = rd_status_notify_or_indicate(conn, BT_UUID_RAS_RD_OVERWRITTEN, ranging_counter);
+	ARG_UNUSED(err); /* TODO */
 }

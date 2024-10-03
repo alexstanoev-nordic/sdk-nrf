@@ -22,6 +22,13 @@ config BT_RAS_MAX_ACTIVE_RRSP
 	help
 	  The number of simultaneous connections with an instance of RAS RRSP
 
+config BT_RAS_RD_BUFFERS_PER_CONN
+	int "Number of ranging data buffers per connection"
+	default 1
+	range 1 10
+	help
+	  The number of ranging procedures that can be stored inside RRSP
+
 module = BT_RAS
 module-str = RAS
 source "${ZEPHYR_BASE}/subsys/logging/Kconfig.template.log_config"

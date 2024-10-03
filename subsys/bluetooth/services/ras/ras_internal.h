@@ -4,10 +4,18 @@
  * SPDX-License-Identifier: LicenseRef-Nordic-5-Clause
  */
 
+#ifndef BT_RAS_INTERNAL_H_
+#define BT_RAS_INTERNAL_H_
+
 #include <zephyr/kernel.h>
 #include <zephyr/bluetooth/conn.h>
-
+#include <zephyr/bluetooth/gatt.h>
+#include <bluetooth/services/ras.h>
 #include <stdint.h>
+
+#ifdef __cplusplus
+extern "C" {
+#endif
 
 enum ras_feat {
 	RAS_FEAT_REALTIME_RD          = BIT(0),
@@ -40,18 +48,17 @@ struct ras_segment {
 
 struct bt_ras_rrsp {
 	struct bt_conn *conn;
-	struct net_buf_simple *rd_buf;
+
+	struct ras_rd_buffer *active_buf;
 	struct k_work send_data_work;
 	struct k_timer data_req_timeout_timer; /* TODO */
 
-	bool streaming; /* TODO: atomic */
-	uint16_t streaming_ranging_counter;
-	uint16_t writing_ranging_counter;
-	uint16_t overwritten_ranging_counter;
-	uint16_t segment_counter;
+	struct bt_gatt_indicate_params ondemand_ind_params;
+	struct bt_gatt_indicate_params rascp_ind_params;
+	struct bt_gatt_indicate_params rd_status_params;
 
-	uint16_t bytes_sent;
-	uint16_t bytes_written;
+	uint16_t segment_counter;
+	bool streaming; /* TODO: atomic */
 };
 
 struct bt_ras_rrsp *bt_ras_rrsp_find(struct bt_conn *conn);
@@ -61,10 +68,11 @@ void rrsp_rascp_send_complete_rd_rsp(struct bt_conn *conn, uint16_t ranging_coun
 
 int rrsp_ondemand_rd_notify_or_indicate(struct bt_conn *conn, struct net_buf_simple *buf);
 int rrsp_rascp_indicate(struct bt_conn *conn, struct net_buf_simple *rsp);
-int rrsp_rd_ready_indicate(struct bt_conn *conn, uint16_t ranging_counter);
-int rrsp_rd_overwritten_indicate(struct bt_conn *conn, uint16_t ranging_counter);
+void rrsp_rd_ready_indicate(struct bt_conn *conn, uint16_t ranging_counter);
+void rrsp_rd_overwritten_indicate(struct bt_conn *conn, uint16_t ranging_counter);
 
-bool bt_ras_rd_buffer_ranging_counter_check(struct bt_ras_rrsp *rrsp, uint16_t ranging_counter);
-bool bt_ras_rd_buffer_ranging_counter_free(struct bt_ras_rrsp *rrsp, uint16_t ranging_counter);
-int bt_ras_rd_buffer_bytes_left_get(struct bt_ras_rrsp *rrsp);
-int bt_ras_rd_buffer_segment_get(struct bt_ras_rrsp *rrsp, uint8_t * data_out, uint16_t seg_size);
+#ifdef __cplusplus
+}
+#endif
+
+#endif /* BT_RAS_INTERNAL_H_ */

@@ -4,9 +4,17 @@
  * SPDX-License-Identifier: LicenseRef-Nordic-5-Clause
  */
 
+#ifndef BT_RAS_H_
+#define BT_RAS_H_
+
+#include <stdint.h>
 #include <zephyr/kernel.h>
 #include <zephyr/bluetooth/conn.h>
 #include <zephyr/bluetooth/uuid.h>
+
+#ifdef __cplusplus
+extern "C" {
+#endif
 
 /** @brief UUID of the Ranging Service. **/
 #define BT_UUID_RANGING_SERVICE_VAL (0x185B)
@@ -37,6 +45,46 @@
 #define BT_UUID_RAS_RD_READY       BT_UUID_DECLARE_16(BT_UUID_RAS_RD_READY_VAL)
 #define BT_UUID_RAS_RD_OVERWRITTEN BT_UUID_DECLARE_16(BT_UUID_RAS_RD_OVERWRITTEN_VAL)
 
+#define BT_RAS_MAX_SUBEVENTS_PER_PROCEDURE 32
+#define BT_RAS_MAX_STEPS_PER_PROCEDURE     256
+
+#define BT_RAS_RANGING_HEADER_LEN  (sizeof(struct ras_ranging_header))
+#define BT_RAS_SUBEVENT_HEADER_LEN (sizeof(struct ras_subevent_header))
+#define BT_RAS_STEP_MODE_LEN       1
+#define BT_RAS_MAX_STEP_DATA_LEN   35
+
+/* TODO: This is most likely overestimating the size */
+#define BT_RAS_PROCEDURE_MEM (BT_RAS_RANGING_HEADER_LEN \
+			     + (BT_RAS_MAX_SUBEVENTS_PER_PROCEDURE * BT_RAS_SUBEVENT_HEADER_LEN) \
+			     + (BT_RAS_MAX_STEPS_PER_PROCEDURE * BT_RAS_STEP_MODE_LEN) \
+			     + (BT_RAS_MAX_STEPS_PER_PROCEDURE * BT_RAS_MAX_STEP_DATA_LEN))
+
+/** @brief RAS Ranging Data Buffer callback structure. */
+struct bt_ras_rd_buffer_cb {
+	/** @brief New ranging data has been received from the local controller.
+	 *
+	 *  This callback notifies the application that the ranging data buffer
+	 *  has reassembled a complete ranging procedure from the local controller.
+	 *
+	 *  @param conn Connection object.
+	 *  @param ranging_counter Ranging counter of the stored procedure.
+	 */
+	void (*new_ranging_data_received)(struct bt_conn *conn, uint16_t ranging_counter);
+
+	/** @brief Ranging data has been overwritten.
+	 *
+	 *  This callback notifies the application that the ranging data buffer
+	 *  has overwritten a stored procedure due to running out of buffers
+	 *  to store a newer procedure from the local controller.
+	 *
+	 *  @param conn Connection object.
+	 *  @param ranging_counter Ranging counter of the overwritten procedure.
+	 */
+	void (*ranging_data_overwritten)(struct bt_conn *conn, uint16_t ranging_counter);
+
+	sys_snode_t node;
+};
+
 struct ras_ranging_header {
 	uint16_t ranging_counter : 12;
 	uint8_t  config_id       : 4;
@@ -55,11 +103,40 @@ struct ras_subevent_header {
 	uint8_t num_steps_reported;
 } __packed;
 
-struct ras_subevent {
-	struct ras_subevent_header header;
-	uint8_t * data;
-} __packed;
+struct ras_rd_buffer {
+	struct bt_conn *conn;
+	uint16_t ranging_counter;
+	uint16_t subevent_cursor;
+	uint16_t read_cursor;
+	uint8_t ready : 1; /* All ranging data has been written */
+	uint8_t busy : 1; /* Buffer is receiving data from HCI */
+	uint8_t refcount; /* TODO atomic */
+	union {
+		uint8_t buf[BT_RAS_PROCEDURE_MEM];
+		struct {
+			struct ras_ranging_header ranging_header;
+			uint8_t subevents[];
+		};
+	} procedure;
+};
+
+/* Ranging service API */
 
 int bt_ras_rrsp_init(void);
 int bt_ras_rrsp_alloc(struct bt_conn *conn);
 void bt_ras_rrsp_free(struct bt_conn *conn);
+
+/* Ranging data buffer API */
+
+void bt_ras_rd_buffer_init(void);
+void bt_ras_rd_buffer_cb_register(struct bt_ras_rd_buffer_cb *cb);
+bool bt_ras_rd_buffer_ready_check(struct bt_conn *conn, uint16_t ranging_counter);
+struct ras_rd_buffer *bt_ras_rd_buffer_claim(struct bt_conn *conn, uint16_t ranging_counter);
+int bt_ras_rd_buffer_release(struct ras_rd_buffer *buf);
+int bt_ras_rd_buffer_bytes_pull(struct ras_rd_buffer *buf, uint8_t *out_buf, uint16_t max_data_len);
+
+#ifdef __cplusplus
+}
+#endif
+
+#endif /* BT_RAS_H_ */
