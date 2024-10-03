@@ -23,6 +23,8 @@
 
 LOG_MODULE_DECLARE(ras, CONFIG_BT_RAS_LOG_LEVEL);
 
+#define SEND_DUMMY_DATA
+
 #define RD_BUFFER_COUNT (CONFIG_BT_RAS_MAX_ACTIVE_RRSP * CONFIG_BT_RAS_RD_BUFFERS_PER_CONN)
 
 static struct ras_rd_buffer rd_buffer_pool[RD_BUFFER_COUNT];
@@ -37,6 +39,7 @@ static struct step_data_context {
 static void notify_new_rd_stored(struct bt_conn *conn, uint16_t ranging_counter)
 {
 	struct bt_ras_rd_buffer_cb *cb;
+	LOG_DBG("%u", ranging_counter);
 
 	SYS_SLIST_FOR_EACH_CONTAINER(&callback_list, cb, node) {
 		if (cb->new_ranging_data_received) {
@@ -48,6 +51,7 @@ static void notify_new_rd_stored(struct bt_conn *conn, uint16_t ranging_counter)
 static void notify_rd_overwritten(struct bt_conn *conn, uint16_t ranging_counter)
 {
 	struct bt_ras_rd_buffer_cb *cb;
+	LOG_DBG("%u", ranging_counter);
 
 	SYS_SLIST_FOR_EACH_CONTAINER(&callback_list, cb, node) {
 		if (cb->ranging_data_overwritten) {
@@ -209,9 +213,34 @@ static void subevent_data_available(struct bt_conn *conn, struct bt_conn_le_cs_s
 	}
 }
 
+#ifdef SEND_DUMMY_DATA
+static struct bt_conn *curr_conn;
+void data_timer_handler(struct k_timer *dummy)
+{
+	ARG_UNUSED(dummy);
+	static int cnt = 0;
+	cnt++;
+
+	struct bt_conn_le_cs_subevent_result data;
+	data.header.procedure_counter = cnt;
+	data.header.num_steps_reported = 0;
+	data.header.procedure_done_status = BT_CONN_LE_CS_PROCEDURE_COMPLETE;
+	data.step_data_buf = NULL;
+	subevent_data_available(curr_conn, &data);
+}
+
+K_TIMER_DEFINE(data_timer, data_timer_handler, NULL);
+
+static void connected(struct bt_conn *conn, uint8_t err) {
+	k_timer_start(&data_timer, K_SECONDS(5), K_SECONDS(5));
+	curr_conn = conn;
+}
+#endif
+
 static void disconnected(struct bt_conn *conn, uint8_t reason)
 {
 	ARG_UNUSED(reason);
+	k_timer_stop(&data_timer);
 
 	for (uint8_t i = 0; i < RD_BUFFER_COUNT; i++) {
 		if (rd_buffer_pool[i].conn == conn) {
@@ -223,6 +252,9 @@ static void disconnected(struct bt_conn *conn, uint8_t reason)
 static struct bt_conn_cb conn_callbacks = {
 	.le_cs_subevent_data_available = subevent_data_available,
 	.disconnected = disconnected,
+#ifdef SEND_DUMMY_DATA
+	.connected = connected,
+#endif
 };
 
 void bt_ras_rd_buffer_init(void)

@@ -59,6 +59,7 @@ enum rascp_rsp_code {
 
 void rrsp_rascp_send_complete_rd_rsp(struct bt_conn *conn, uint16_t ranging_counter)
 {
+	LOG_DBG("%u", ranging_counter);
 	NET_BUF_SIMPLE_DEFINE(rsp, RASCP_CMD_OPCODE_LEN + RASCP_RSP_OPCODE_COMPLETE_RD_RSP_LEN);
 
 	net_buf_simple_add_u8(&rsp, RASCP_RSP_OPCODE_COMPLETE_RD_RSP);
@@ -68,6 +69,7 @@ void rrsp_rascp_send_complete_rd_rsp(struct bt_conn *conn, uint16_t ranging_coun
 
 static void send_rsp_code(struct bt_conn *conn, enum rascp_rsp_code rsp_code)
 {
+	LOG_DBG("%d", rsp_code);
 	NET_BUF_SIMPLE_DEFINE(rsp, RASCP_CMD_OPCODE_LEN + RASCP_RSP_OPCODE_RSP_CODE_LEN);
 
 	net_buf_simple_add_u8(&rsp, RASCP_RSP_OPCODE_RSP_CODE);
@@ -78,6 +80,7 @@ static void send_rsp_code(struct bt_conn *conn, enum rascp_rsp_code rsp_code)
 
 static void start_streaming(struct bt_ras_rrsp *rrsp, uint16_t ranging_counter)
 {
+	LOG_DBG("");
 	rrsp->active_buf = bt_ras_rd_buffer_claim(rrsp->conn, ranging_counter);
 	rrsp->segment_counter = 0;
 	rrsp->streaming = true;
@@ -104,14 +107,13 @@ void rrsp_rascp_cmd_handle(struct bt_conn *conn, struct net_buf_simple *req)
 	switch (opcode) {
 		case RASCP_OPCODE_GET_RD:
 		{
-			LOG_DBG("GET_RD");
-
 			if (param_len != sizeof(uint16_t)) {
 				send_rsp_code(conn, RASCP_RESPONSE_INVALID_PARAMETER);
 				return;
 			}
 
 			uint16_t ranging_counter = sys_le16_to_cpu(net_buf_simple_pull_le16(req));
+			LOG_DBG("GET_RD %d", ranging_counter);
 
 			if (rrsp->active_buf) {
 				/* Disallow getting new ranging data until the current one has been ACKed. */
@@ -131,14 +133,13 @@ void rrsp_rascp_cmd_handle(struct bt_conn *conn, struct net_buf_simple *req)
 		}
 		case RASCP_OPCODE_ACK_RD:
 		{
-			LOG_DBG("ACK_RD");
-
 			if (param_len != sizeof(uint16_t)) {
 				send_rsp_code(conn, RASCP_RESPONSE_INVALID_PARAMETER);
 				return;
 			}
 
 			uint16_t ranging_counter = sys_le16_to_cpu(net_buf_simple_pull_le16(req));
+			LOG_DBG("ACK_RD %d", ranging_counter);
 
 			if (!rrsp->active_buf || rrsp->active_buf->ranging_counter != ranging_counter) {
 				/* Only allow ACKing the currently requested ranging counter. */

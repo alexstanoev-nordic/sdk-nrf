@@ -24,7 +24,7 @@ config BT_RAS_MAX_ACTIVE_RRSP
 
 config BT_RAS_RD_BUFFERS_PER_CONN
 	int "Number of ranging data buffers per connection"
-	default 1
+	default 3
 	range 1 10
 	help
 	  The number of ranging procedures that can be stored inside RRSP
