@@ -22,6 +22,15 @@ config BT_RAS_MAX_ACTIVE_RRSP
 	help
 	  The number of simultaneous connections with an instance of RAS RRSP
 
+config BT_RAS_RRSP_TIMEOUT_SECONDS
+	int "RRSP RAS-CP procedure timeout"
+	default 10
+	range 1 10
+	help
+	  Maximum time allowed between the RRSP indicating a Complete Ranging Data
+	  indication and the RREQ responding with an ACK_Ranging_Data command 
+	  or a Retrieve_Lost_Ranging_Data command.
+
 config BT_RAS_RD_BUFFERS_PER_CONN
 	int "Number of ranging data buffers per connection"
 	default 3

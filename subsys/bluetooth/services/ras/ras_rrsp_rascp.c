@@ -52,11 +52,6 @@ enum rascp_rsp_code {
 	RASCP_RESPONSE_NO_RECORDS_FOUND        = 0x08,
 };
 
-#define RASCP_CMD_OPCODE_LEN     1
-#define RASCP_CMD_OPCODE_OFFSET  0
-#define RASCP_CMD_PARAMS_OFFSET  RASCP_CMD_OPCODE_LEN
-#define RASCP_CMD_PARAMS_MAX_LEN 4
-
 void rrsp_rascp_send_complete_rd_rsp(struct bt_conn *conn, uint16_t ranging_counter)
 {
 	LOG_DBG("%u", ranging_counter);
@@ -64,7 +59,10 @@ void rrsp_rascp_send_complete_rd_rsp(struct bt_conn *conn, uint16_t ranging_coun
 
 	net_buf_simple_add_u8(&rsp, RASCP_RSP_OPCODE_COMPLETE_RD_RSP);
 	net_buf_simple_add_le16(&rsp, ranging_counter);
-	(void)rrsp_rascp_indicate(conn, &rsp);
+	int err = rrsp_rascp_indicate(conn, &rsp); /* TODO handle error */
+	if (err) {
+		LOG_WRN("error %d", err);
+	}
 }
 
 static void send_rsp_code(struct bt_conn *conn, enum rascp_rsp_code rsp_code)
@@ -75,7 +73,10 @@ static void send_rsp_code(struct bt_conn *conn, enum rascp_rsp_code rsp_code)
 	net_buf_simple_add_u8(&rsp, RASCP_RSP_OPCODE_RSP_CODE);
 	net_buf_simple_add_u8(&rsp, rsp_code);
 
-	(void)rrsp_rascp_indicate(conn, &rsp);
+	int err = rrsp_rascp_indicate(conn, &rsp); /* TODO handle error */
+	if (err) {
+		LOG_WRN("error %d", err);
+	}
 }
 
 static void start_streaming(struct bt_ras_rrsp *rrsp, uint16_t ranging_counter)
@@ -84,23 +85,25 @@ static void start_streaming(struct bt_ras_rrsp *rrsp, uint16_t ranging_counter)
 	rrsp->active_buf = bt_ras_rd_buffer_claim(rrsp->conn, ranging_counter);
 	rrsp->segment_counter = 0;
 	rrsp->streaming = true;
-	k_work_submit(&rrsp->send_data_work);
+
+	extern struct k_work_q rrsp_wq; // FIXME
+	k_work_submit_to_queue(&rrsp_wq, &rrsp->send_data_work);
 }
 
-void rrsp_rascp_cmd_handle(struct bt_conn *conn, struct net_buf_simple *req)
+void rrsp_rascp_cmd_handle(struct bt_ras_rrsp *rrsp)
 {
 	int err;
 	ARG_UNUSED(err);
 
-	uint8_t opcode = net_buf_simple_pull_u8(req);
-	uint8_t param_len = MIN(req->len, RASCP_CMD_PARAMS_MAX_LEN) - RASCP_CMD_OPCODE_LEN;
+	struct net_buf_simple req;
+	net_buf_simple_init_with_data(&req, rrsp->rascp_cmd_buf, rrsp->rascp_cmd_len);
 
-	struct bt_ras_rrsp *rrsp = bt_ras_rrsp_find(conn);
-	__ASSERT_NO_MSG(rrsp);
+	uint8_t opcode = net_buf_simple_pull_u8(&req);
+	uint8_t param_len = MIN(req.len, RASCP_CMD_PARAMS_MAX_LEN);
 
 	/* TODO: Handle RASCP_OPCODE_ABORT_OP */
 	if (rrsp->streaming) {
-		send_rsp_code(conn, RASCP_RESPONSE_SERVER_BUSY);
+		send_rsp_code(rrsp->conn, RASCP_RESPONSE_SERVER_BUSY);
 		return;
 	}
 
@@ -108,42 +111,43 @@ void rrsp_rascp_cmd_handle(struct bt_conn *conn, struct net_buf_simple *req)
 		case RASCP_OPCODE_GET_RD:
 		{
 			if (param_len != sizeof(uint16_t)) {
-				send_rsp_code(conn, RASCP_RESPONSE_INVALID_PARAMETER);
+				LOG_DBG("invalid %d", param_len);
+				send_rsp_code(rrsp->conn, RASCP_RESPONSE_INVALID_PARAMETER);
 				return;
 			}
-
-			uint16_t ranging_counter = sys_le16_to_cpu(net_buf_simple_pull_le16(req));
+			// TODO check subscription to ondemand rd
+			uint16_t ranging_counter = net_buf_simple_pull_le16(&req);
 			LOG_DBG("GET_RD %d", ranging_counter);
 
 			if (rrsp->active_buf) {
 				/* Disallow getting new ranging data until the current one has been ACKed. */
-				send_rsp_code(conn, RASCP_RESPONSE_SERVER_BUSY);
+				send_rsp_code(rrsp->conn, RASCP_RESPONSE_SERVER_BUSY);
 				return;
 			}
 
-			if (!bt_ras_rd_buffer_ready_check(conn, ranging_counter)) {
-				send_rsp_code(conn, RASCP_RESPONSE_NO_RECORDS_FOUND);
+			if (!bt_ras_rd_buffer_ready_check(rrsp->conn, ranging_counter)) {
+				send_rsp_code(rrsp->conn, RASCP_RESPONSE_NO_RECORDS_FOUND);
 				return;
 			}
 
+			send_rsp_code(rrsp->conn, RASCP_RESPONSE_SUCCESS);
 			start_streaming(rrsp, ranging_counter);
-			send_rsp_code(conn, RASCP_RESPONSE_SUCCESS);
 
 			break;
 		}
 		case RASCP_OPCODE_ACK_RD:
 		{
 			if (param_len != sizeof(uint16_t)) {
-				send_rsp_code(conn, RASCP_RESPONSE_INVALID_PARAMETER);
+				send_rsp_code(rrsp->conn, RASCP_RESPONSE_INVALID_PARAMETER);
 				return;
 			}
 
-			uint16_t ranging_counter = sys_le16_to_cpu(net_buf_simple_pull_le16(req));
+			uint16_t ranging_counter = net_buf_simple_pull_le16(&req);
 			LOG_DBG("ACK_RD %d", ranging_counter);
 
 			if (!rrsp->active_buf || rrsp->active_buf->ranging_counter != ranging_counter) {
 				/* Only allow ACKing the currently requested ranging counter. */
-				send_rsp_code(conn, RASCP_RESPONSE_NO_RECORDS_FOUND);
+				send_rsp_code(rrsp->conn, RASCP_RESPONSE_NO_RECORDS_FOUND);
 				return;
 			}
 
@@ -151,14 +155,14 @@ void rrsp_rascp_cmd_handle(struct bt_conn *conn, struct net_buf_simple *req)
 			__ASSERT_NO_MSG(!err);
 			rrsp->active_buf = NULL;
 
-			send_rsp_code(conn, RASCP_RESPONSE_SUCCESS);
+			send_rsp_code(rrsp->conn, RASCP_RESPONSE_SUCCESS);
 
 			break;
 		}
 		default:
 		{
 			LOG_INF("Opcode %x invalid or unsupported", opcode);
-			send_rsp_code(conn, RASCP_RESPONSE_OPCODE_NOT_SUPPORTED);
+			send_rsp_code(rrsp->conn, RASCP_RESPONSE_OPCODE_NOT_SUPPORTED);
 			break;
 		}
 	}

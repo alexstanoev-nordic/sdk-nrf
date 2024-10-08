@@ -17,6 +17,12 @@
 extern "C" {
 #endif
 
+#define RASCP_CMD_OPCODE_LEN     1
+#define RASCP_CMD_OPCODE_OFFSET  0
+#define RASCP_CMD_PARAMS_OFFSET  RASCP_CMD_OPCODE_LEN
+#define RASCP_CMD_PARAMS_MAX_LEN 4
+#define RASCP_WRITE_MAX_LEN (RASCP_CMD_OPCODE_LEN + RASCP_CMD_PARAMS_MAX_LEN)
+
 enum ras_feat {
 	RAS_FEAT_REALTIME_RD          = BIT(0),
 	RAS_FEAT_RETRIEVE_LOST_RD_SEG = BIT(1),
@@ -51,11 +57,15 @@ struct bt_ras_rrsp {
 
 	struct ras_rd_buffer *active_buf;
 	struct k_work send_data_work;
-	struct k_timer data_req_timeout_timer; /* TODO */
+	struct k_work rascp_work;
+	struct k_timer rascp_timeout;
 
 	struct bt_gatt_indicate_params ondemand_ind_params;
 	struct bt_gatt_indicate_params rascp_ind_params;
 	struct bt_gatt_indicate_params rd_status_params;
+
+	uint8_t rascp_cmd_buf[RASCP_WRITE_MAX_LEN];
+	uint8_t rascp_cmd_len;
 
 	uint16_t segment_counter;
 	bool streaming; /* TODO: atomic */
@@ -63,7 +73,7 @@ struct bt_ras_rrsp {
 
 struct bt_ras_rrsp *bt_ras_rrsp_find(struct bt_conn *conn);
 
-void rrsp_rascp_cmd_handle(struct bt_conn *conn, struct net_buf_simple *req);
+void rrsp_rascp_cmd_handle(struct bt_ras_rrsp *rrsp);
 void rrsp_rascp_send_complete_rd_rsp(struct bt_conn *conn, uint16_t ranging_counter);
 
 int rrsp_ondemand_rd_notify_or_indicate(struct bt_conn *conn, struct net_buf_simple *buf);

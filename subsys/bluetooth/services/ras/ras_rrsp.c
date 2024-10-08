@@ -18,8 +18,18 @@
 
 LOG_MODULE_REGISTER(ras, CONFIG_BT_RAS_LOG_LEVEL);
 
+#define RRSP_WQ_STACK_SIZE 5120
+#define RRSP_WQ_PRIORITY 5
+
+K_THREAD_STACK_DEFINE(rrsp_wq_stack_area, RRSP_WQ_STACK_SIZE);
+
 static struct bt_ras_rrsp rrsp_pool[CONFIG_BT_RAS_MAX_ACTIVE_RRSP];
 static uint32_t ras_features;
+struct k_work_q rrsp_wq;
+
+/* TODO define static net buf or see if one can be used from bt, mtu size
+ * instead of defining one on the stack
+ */
 
 static ssize_t ras_features_read(struct bt_conn *conn, const struct bt_gatt_attr *attr,
 				 void *buf, uint16_t len, uint16_t offset)
@@ -30,19 +40,26 @@ static ssize_t ras_features_read(struct bt_conn *conn, const struct bt_gatt_attr
 static ssize_t ras_cp_write(struct bt_conn *conn, struct bt_gatt_attr const *attr,
 			    void const *buf, uint16_t len, uint16_t offset, uint8_t flags)
 {
-	LOG_DBG("RAS-CP write");
+	LOG_HEXDUMP_DBG(buf, len, "Write request");
 
 	if (!bt_gatt_is_subscribed(conn, attr, BT_GATT_CCC_INDICATE)) {
+		LOG_DBG("Not subscribed");
 		return BT_GATT_ERR(RAS_ATT_ERROR_CCC_CONFIG);
 	}
 
-	LOG_DBG("ras_cp_write len %d", len);
-	LOG_HEXDUMP_DBG(buf, len, "ras_cp_write");
+	struct bt_ras_rrsp *rrsp = bt_ras_rrsp_find(conn);
+	__ASSERT_NO_MSG(rrsp);
 
-	struct net_buf_simple req;
-	net_buf_simple_init_with_data(&req, (uint8_t *)buf, len);
+	if (k_work_is_pending(&rrsp->rascp_work) || len > RASCP_WRITE_MAX_LEN) {
+		LOG_DBG("Write rejected");
+		return BT_GATT_ERR(RAS_ATT_ERROR_WRITE_REQ_REJECTED);
+	}
 
-	rrsp_rascp_cmd_handle(conn, &req);
+	uint16_t buf_len = MIN(len, RASCP_WRITE_MAX_LEN);
+	memcpy(rrsp->rascp_cmd_buf, buf, buf_len);
+	rrsp->rascp_cmd_len = (uint8_t) buf_len;
+
+	k_work_submit_to_queue(&rrsp_wq, &rrsp->rascp_work);
 
 	return len;
 }
@@ -102,6 +119,9 @@ static struct bt_conn_cb conn_callbacks = {
 
 static struct bt_ras_rd_buffer_cb rd_buffer_callbacks = {
 	.new_ranging_data_received = rrsp_rd_ready_indicate,
+
+	/* TODO don't send overwritten for ACKd data
+	 * Maybe store another flag in the buffer to say it was ackd */
 	.ranging_data_overwritten = rrsp_rd_overwritten_indicate,
 };
 
@@ -127,12 +147,12 @@ static int rrsp_chunk_send(struct bt_ras_rrsp *rrsp)
 	uint16_t actual_data_len = bt_ras_rd_buffer_bytes_pull(rrsp->active_buf, ras_segment->data, max_data_len);
 	bool last_seg = (actual_data_len < max_data_len);
 
+	LOG_DBG("%u %u", actual_data_len, max_data_len);
+
 	if (actual_data_len) {
 		ras_segment->header.first_seg = first_seg;
 		ras_segment->header.last_seg = last_seg;
 		ras_segment->header.seg_counter = rrsp->segment_counter & BIT_MASK(6);
-
-		rrsp->segment_counter++;
 
 		(void)net_buf_simple_remove_mem(&buf, (max_data_len - actual_data_len));
 
@@ -140,14 +160,19 @@ static int rrsp_chunk_send(struct bt_ras_rrsp *rrsp)
 		if (err) {
 			LOG_WRN("rrsp_ondemand_rd_notify_or_indicate failed err %d", err);
 
+			/* Keep retrying */
+			bt_ras_rd_buffer_rewind(rrsp->active_buf, actual_data_len);
+
 			return err;
 		}
+
+		rrsp->segment_counter++;
 
 		LOG_DBG("Chunk with RSC %d sent", rrsp->segment_counter);
 	}
 
 	if (!last_seg) {
-		k_work_submit(&rrsp->send_data_work);
+		k_work_submit_to_queue(&rrsp_wq, &rrsp->send_data_work);
 	} else {
 		LOG_DBG("all chunks sent");
 		rrsp_rascp_send_complete_rd_rsp(rrsp->conn, rrsp->active_buf->ranging_counter);
@@ -161,7 +186,7 @@ static int rrsp_chunk_send(struct bt_ras_rrsp *rrsp)
 static void send_data_work_handler(struct k_work *work)
 {
 	struct bt_ras_rrsp *rrsp = CONTAINER_OF(work, struct bt_ras_rrsp, send_data_work);
-	LOG_DBG("rrsp %p", rrsp);
+	//LOG_DBG("rrsp %p", rrsp);
 
 	if (!rrsp->streaming || !rrsp->active_buf) {
 		return;
@@ -173,6 +198,20 @@ static void send_data_work_handler(struct k_work *work)
 		LOG_ERR("rrsp_chunk_send failed: %d", err);
 	}
 
+}
+
+static void rascp_work_handler(struct k_work *work)
+{
+	struct bt_ras_rrsp *rrsp = CONTAINER_OF(work, struct bt_ras_rrsp, rascp_work);
+	LOG_DBG("rrsp %p", rrsp);
+
+	rrsp_rascp_cmd_handle(rrsp);
+}
+
+static void rascp_timeout_handler(struct k_timer *timer)
+{
+	ARG_UNUSED(timer);
+	LOG_DBG("");
 }
 
 struct bt_ras_rrsp *bt_ras_rrsp_find(struct bt_conn *conn)
@@ -213,11 +252,8 @@ int bt_ras_rrsp_alloc(struct bt_conn *conn)
 	rrsp->conn = bt_conn_ref(conn);
 
 	k_work_init(&rrsp->send_data_work, send_data_work_handler);
-
-	// A maximum timeout of 10 seconds, or a shorter implementation configurable timeout value, has
-	// elapsed since the RRSP indicated a Complete Ranging Data indication and the RREQ did not
-	// respond with an ACK_Ranging_Data command or a Retrieve_Lost_Ranging_Data command.
-	//k_timer_init(&my_timer, my_expiry_function, NULL);
+	k_work_init(&rrsp->rascp_work, rascp_work_handler);
+	k_timer_init(&rrsp->rascp_timeout, rascp_timeout_handler, NULL);
 
 	return 0;
 }
@@ -232,20 +268,27 @@ void bt_ras_rrsp_free(struct bt_conn *conn)
 		rrsp->conn = NULL;
 
 		(void)k_work_cancel(&rrsp->send_data_work);
+		(void)k_work_cancel(&rrsp->rascp_work);
+		k_timer_stop(&rrsp->rascp_timeout);
 	}
 }
 
 int bt_ras_rrsp_init(void)
 {
+	k_work_queue_init(&rrsp_wq);
+	k_work_queue_start(&rrsp_wq, rrsp_wq_stack_area,
+	                   K_THREAD_STACK_SIZEOF(rrsp_wq_stack_area), RRSP_WQ_PRIORITY,
+	                   NULL);
+
 	ras_features = 0;
 #if defined(CONFIG_BT_RAS_REALTIME_RANGING_DATA)
-	ras_features |= 1 << RAS_FEAT_REALTIME_RD_BIT;
+	ras_features |= BIT(RAS_FEAT_REALTIME_RD_BIT);
 #endif
-
-	bt_conn_cb_register(&conn_callbacks);
 
 	bt_ras_rd_buffer_init();
 	bt_ras_rd_buffer_cb_register(&rd_buffer_callbacks);
+
+	bt_conn_cb_register(&conn_callbacks);
 
 	return 0;
 }
@@ -294,7 +337,7 @@ static void ondemand_rd_notify_sent_cb(struct bt_conn *conn, void *user_data)
 	struct bt_ras_rrsp *rrsp = bt_ras_rrsp_find(conn);
 	if (rrsp) {
 		LOG_DBG("");
-		k_work_submit(&rrsp->send_data_work);
+		k_work_submit_to_queue(&rrsp_wq, &rrsp->send_data_work);
 	}
 }
 
@@ -303,7 +346,7 @@ static void ondemand_rd_indicate_sent_cb(struct bt_conn *conn, struct bt_gatt_in
 	struct bt_ras_rrsp *rrsp = bt_ras_rrsp_find(conn);
 	if (rrsp) {
 		LOG_DBG("");
-		k_work_submit(&rrsp->send_data_work);
+		k_work_submit_to_queue(&rrsp_wq, &rrsp->send_data_work);
 	}
 }
 
@@ -388,12 +431,18 @@ static int rd_status_notify_or_indicate(struct bt_conn *conn, const struct bt_uu
 
 void rrsp_rd_ready_indicate(struct bt_conn *conn, uint16_t ranging_counter)
 {
+	/* TODO send to wq */
 	int err = rd_status_notify_or_indicate(conn, BT_UUID_RAS_RD_READY, ranging_counter);
-	ARG_UNUSED(err); /* TODO */
+	if (err) {
+		LOG_WRN("error %d", err);
+	}
 }
 
 void rrsp_rd_overwritten_indicate(struct bt_conn *conn, uint16_t ranging_counter)
 {
+	/* TODO send to wq */
 	int err = rd_status_notify_or_indicate(conn, BT_UUID_RAS_RD_OVERWRITTEN, ranging_counter);
-	ARG_UNUSED(err); /* TODO */
+	if (err) {
+		LOG_WRN("error %d", err);
+	}
 }

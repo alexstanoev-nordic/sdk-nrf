@@ -110,6 +110,7 @@ struct ras_rd_buffer {
 	uint16_t read_cursor;
 	uint8_t ready : 1; /* All ranging data has been written */
 	uint8_t busy : 1; /* Buffer is receiving data from HCI */
+	uint8_t acked : 1; /* Buffer has been ACKed, do not notify overwritten */
 	uint8_t refcount; /* TODO atomic */
 	union {
 		uint8_t buf[BT_RAS_PROCEDURE_MEM];
@@ -134,6 +135,7 @@ bool bt_ras_rd_buffer_ready_check(struct bt_conn *conn, uint16_t ranging_counter
 struct ras_rd_buffer *bt_ras_rd_buffer_claim(struct bt_conn *conn, uint16_t ranging_counter);
 int bt_ras_rd_buffer_release(struct ras_rd_buffer *buf);
 int bt_ras_rd_buffer_bytes_pull(struct ras_rd_buffer *buf, uint8_t *out_buf, uint16_t max_data_len);
+void bt_ras_rd_buffer_rewind(struct ras_rd_buffer *buf, uint16_t data_len);
 
 #ifdef __cplusplus
 }

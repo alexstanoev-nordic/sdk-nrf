@@ -77,8 +77,7 @@ static struct ras_rd_buffer *buffer_get(struct bt_conn *conn, uint16_t ranging_c
 
 static void rd_buffer_init(struct bt_conn *conn, struct ras_rd_buffer *buf, uint16_t ranging_counter)
 {
-	bt_conn_ref(conn);
-	buf->conn            = conn;
+	buf->conn            = bt_conn_ref(conn);
 	buf->ranging_counter = ranging_counter;
 	buf->ready           = false;
 	buf->busy            = true;
@@ -215,24 +214,41 @@ static void subevent_data_available(struct bt_conn *conn, struct bt_conn_le_cs_s
 
 #ifdef SEND_DUMMY_DATA
 static struct bt_conn *curr_conn;
+NET_BUF_SIMPLE_DEFINE_STATIC(tmp_step_buf, 2100);
+
 void data_timer_handler(struct k_timer *dummy)
 {
 	ARG_UNUSED(dummy);
 	static int cnt = 0;
 	cnt++;
 
+	net_buf_simple_reset(&tmp_step_buf);
+
+	const int steps = 10;
+	const int step_len = 200;
+
+	for (int j = 0; j < steps; j++) {
+		net_buf_simple_add_u8(&tmp_step_buf, 1);  // mode
+		net_buf_simple_add_u8(&tmp_step_buf, 2);  // channel
+		net_buf_simple_add_u8(&tmp_step_buf, step_len); // data len
+
+		for(int i = 0; i < step_len; i++) {
+			net_buf_simple_add_u8(&tmp_step_buf, (uint8_t) (cnt+i)); // data
+		}
+	}
+
 	struct bt_conn_le_cs_subevent_result data;
 	data.header.procedure_counter = cnt;
-	data.header.num_steps_reported = 0;
+	data.header.num_steps_reported = steps;
 	data.header.procedure_done_status = BT_CONN_LE_CS_PROCEDURE_COMPLETE;
-	data.step_data_buf = NULL;
+	data.step_data_buf = &tmp_step_buf;
 	subevent_data_available(curr_conn, &data);
 }
 
 K_TIMER_DEFINE(data_timer, data_timer_handler, NULL);
 
 static void connected(struct bt_conn *conn, uint8_t err) {
-	k_timer_start(&data_timer, K_SECONDS(5), K_SECONDS(5));
+	k_timer_start(&data_timer, K_SECONDS(5), K_MSEC(500));
 	curr_conn = conn;
 }
 #endif
@@ -312,4 +328,14 @@ int bt_ras_rd_buffer_bytes_pull(struct ras_rd_buffer *buf, uint8_t *out_buf, uin
 	buf->read_cursor += pull_bytes;
 
 	return pull_bytes;
+}
+
+void bt_ras_rd_buffer_rewind(struct ras_rd_buffer *buf, uint16_t data_len) {
+	if (!buf->ready) {
+		return;
+	}
+
+	__ASSERT_NO_MSG(buf->read_cursor >= data_len);
+	buf->read_cursor -= data_len;
+
 }
