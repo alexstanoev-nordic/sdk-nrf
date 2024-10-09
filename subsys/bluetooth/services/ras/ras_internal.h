@@ -58,6 +58,7 @@ struct bt_ras_rrsp {
 	struct ras_rd_buffer *active_buf;
 	struct k_work send_data_work;
 	struct k_work rascp_work;
+	struct k_work status_work;
 	struct k_timer rascp_timeout;
 
 	struct bt_gatt_indicate_params ondemand_ind_params;
@@ -67,8 +68,13 @@ struct bt_ras_rrsp {
 	uint8_t rascp_cmd_buf[RASCP_WRITE_MAX_LEN];
 	uint8_t rascp_cmd_len;
 
+	uint16_t ready_ranging_counter;
+	uint16_t overwritten_ranging_counter;
 	uint16_t segment_counter;
+
 	bool streaming; /* TODO: atomic */
+	bool notify_ready; /* TODO handle overwriting older */
+	bool notify_overwritten; /* TODO handle overwriting older */
 };
 
 struct bt_ras_rrsp *bt_ras_rrsp_find(struct bt_conn *conn);

@@ -81,6 +81,7 @@ static void rd_buffer_init(struct bt_conn *conn, struct ras_rd_buffer *buf, uint
 	buf->ranging_counter = ranging_counter;
 	buf->ready           = false;
 	buf->busy            = true;
+	buf->acked           = false;
 	buf->refcount        = 0;
 	buf->subevent_cursor = 0;
 	buf->read_cursor     = 0;
@@ -95,6 +96,7 @@ static void rd_buffer_free(struct ras_rd_buffer *buf)
 	buf->conn            = NULL;
 	buf->ready           = false;
 	buf->busy            = false;
+	buf->acked           = false;
 	buf->refcount        = 0;
 	buf->subevent_cursor = 0;
 	buf->read_cursor     = 0;
@@ -136,7 +138,10 @@ static struct ras_rd_buffer *rd_buffer_alloc(struct bt_conn *conn, uint16_t rang
 
 	/* Overwrite the oldest stored ranging buffer that is not in use */
 	if (available_oldest_buffer != NULL) {
-		notify_rd_overwritten(conn, oldest_ranging_counter);
+		if (!available_oldest_buffer->acked) {
+			/* Buffer has been sent to peer, no need to notify */
+			notify_rd_overwritten(conn, oldest_ranging_counter);
+		}
 		rd_buffer_free(available_oldest_buffer);
 
 		rd_buffer_init(conn, available_oldest_buffer, ranging_counter);
@@ -161,6 +166,7 @@ static bool process_step_data(struct bt_le_cs_subevent_step *step)
 
 static void subevent_data_available(struct bt_conn *conn, struct bt_conn_le_cs_subevent_result *result)
 {
+	LOG_DBG("");
 	struct ras_rd_buffer *buf = buffer_get(conn, result->header.procedure_counter, false, true);
 	if (!buf) {
 		/* First subevent - allocate a buffer */

@@ -151,6 +151,7 @@ void rrsp_rascp_cmd_handle(struct bt_ras_rrsp *rrsp)
 				return;
 			}
 
+			rrsp->active_buf->acked = true;
 			err = bt_ras_rd_buffer_release(rrsp->active_buf);
 			__ASSERT_NO_MSG(!err);
 			rrsp->active_buf = NULL;
