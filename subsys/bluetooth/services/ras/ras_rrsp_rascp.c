@@ -16,42 +16,6 @@
 
 LOG_MODULE_DECLARE(ras, CONFIG_BT_RAS_LOG_LEVEL);
 
-/**@brief RAS Control Point opcodes. */
-enum rascp_opcode {
-	RASCP_OPCODE_GET_RD                    = 0x00,
-	RASCP_OPCODE_ACK_RD                    = 0x01,
-	RASCP_OPCODE_RETRIEVE_LOST_RD_SEGMENTS = 0x02,
-	RASCP_OPCODE_ABORT_OP                  = 0x03,
-	RASCP_OPCODE_SET_FILTER                = 0x04,
-};
-
-/**@brief RAS Control Point Response opcodes. */
-enum rascp_rsp_opcode {
-	RASCP_RSP_OPCODE_COMPLETE_RD_RSP          = 0x00,
-	RASCP_RSP_OPCODE_COMPLETE_LOST_RD_SEG_RSP = 0x01,
-	RASCP_RSP_OPCODE_RSP_CODE                 = 0x02,
-};
-
-/**@brief RAS Control Point Response length. */
-enum rascp_rsp_opcode_len {
-	RASCP_RSP_OPCODE_COMPLETE_RD_RSP_LEN          = 2,
-	RASCP_RSP_OPCODE_COMPLETE_LOST_RD_SEG_RSP_LEN = 4,
-	RASCP_RSP_OPCODE_RSP_CODE_LEN                 = 1,
-};
-
-/**@brief RAS Control Point response codes. */
-enum rascp_rsp_code {
-	RASCP_RESPONSE_RESERVED                = 0x00,
-	RASCP_RESPONSE_SUCCESS                 = 0x01,
-	RASCP_RESPONSE_OPCODE_NOT_SUPPORTED    = 0x02,
-	RASCP_RESPONSE_INVALID_PARAMETER       = 0x03,
-	RASCP_RESPONSE_SUCCESS_PERSISTED       = 0x04,
-	RASCP_RESPONSE_ABORT_UNSUCCESSFUL      = 0x05,
-	RASCP_RESPONSE_PROCEDURE_NOT_COMPLETED = 0x06,
-	RASCP_RESPONSE_SERVER_BUSY             = 0x07,
-	RASCP_RESPONSE_NO_RECORDS_FOUND        = 0x08,
-};
-
 void rrsp_rascp_send_complete_rd_rsp(struct bt_conn *conn, uint16_t ranging_counter)
 {
 	LOG_DBG("%u", ranging_counter);
