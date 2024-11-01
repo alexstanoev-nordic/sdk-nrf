@@ -11,7 +11,7 @@
 #include <zephyr/logging/log.h>
 #include <zephyr/sys/byteorder.h>
 #include <zephyr/sys/check.h>
-#include <zephyr/net/buf.h>
+#include <zephyr/net_buf.h>
 #include <bluetooth/services/ras.h>
 
 #include "ras_internal.h"
@@ -26,10 +26,6 @@ K_THREAD_STACK_DEFINE(rrsp_wq_stack_area, RRSP_WQ_STACK_SIZE);
 static struct bt_ras_rrsp rrsp_pool[CONFIG_BT_RAS_MAX_ACTIVE_RRSP];
 static uint32_t ras_features;
 struct k_work_q rrsp_wq;
-
-/* TODO define static net buf or see if one can be used from bt, mtu size
- * instead of defining one on the stack
- */
 
 static int rd_status_notify_or_indicate(struct bt_conn *conn, const struct bt_uuid *uuid, uint16_t ranging_counter);
 
@@ -152,6 +148,7 @@ static int rrsp_chunk_send(struct bt_ras_rrsp *rrsp)
 	 * An extra byte is reserved for the segment header */
 	uint16_t max_data_len = bt_gatt_get_mtu(rrsp->conn) - (4 + sizeof(struct ras_seg_header));
 
+	/* TODO: Use static buffer of size CONFIG_BT_L2CAP_TX_MTU */
 	NET_BUF_SIMPLE_DEFINE(buf, (sizeof(struct ras_seg_header) + max_data_len));
 
 	struct ras_segment *ras_segment = net_buf_simple_add(&buf, sizeof(struct ras_segment) + max_data_len);

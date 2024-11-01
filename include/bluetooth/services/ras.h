@@ -85,13 +85,16 @@ struct bt_ras_rd_buffer_cb {
 	sys_snode_t node;
 };
 
+/** @brief Ranging Header as defined in Ranging Service Specification */
 struct ras_ranging_header {
 	uint16_t ranging_counter : 12;
 	uint8_t  config_id       : 4;
 	int8_t   selected_tx_power;
 	uint8_t  antenna_paths_mask;
 } __packed;
+BUILD_ASSERT(sizeof(struct ras_ranging_header) == 4);
 
+/** @brief Subevent Header as defined in Ranging Service Specification */
 struct ras_subevent_header {
 	uint16_t start_acl_conn_event;
 	int16_t freq_compensation;
@@ -102,7 +105,16 @@ struct ras_subevent_header {
 	int8_t  ref_power_level;
 	uint8_t num_steps_reported;
 } __packed;
+BUILD_ASSERT(sizeof(struct ras_subevent_header) == 8);
 
+/** @brief Ranging Data buffer
+ * Ranging data buffer as defined in RAS Section 3.2
+ *
+ * @note The following fields are not included in this buffer:
+ *       - Subevent count
+ *       - Subevent length
+ *       - Step channel
+ */
 struct ras_rd_buffer {
 	struct bt_conn *conn;
 	uint16_t ranging_counter;
@@ -117,14 +129,41 @@ struct ras_rd_buffer {
 		struct {
 			struct ras_ranging_header ranging_header;
 			uint8_t subevents[];
-		};
+		} __packed;
 	} procedure;
 };
 
 /* Ranging service API */
 
+/** @brief Initialize RAS Ranging Responder service.
+ *
+ * This will initialize the Ranging Service in the Ranging Responder role.
+ *
+ *  @return Zero in case of success and error code in case of error.
+ */
 int bt_ras_rrsp_init(void);
+
+/** @brief Allocate Ranging Responder instance for connection.
+ *
+ * This will allocate an instance of the Ranging Responder service for the given connection.
+ *
+ *  @note The number of supported instances can be set using CONFIG_BT_RAS_MAX_ACTIVE_RRSP
+ *
+ *  @param conn Connection instance.
+ *
+ *  @return Zero in case of success and error code in case of error.
+ */
 int bt_ras_rrsp_alloc(struct bt_conn *conn);
+
+/** @brief Free Ranging Responder instance for connection.
+ *
+ * This will free an allocated instance of the Ranging Responder service for
+ * the given connection, if one has been allocated.
+ * If the connection has no instance allocated, this method has no effect.
+ *
+ *  @param conn Connection instance.
+ *
+ */
 void bt_ras_rrsp_free(struct bt_conn *conn);
 
 /* Ranging data buffer API */

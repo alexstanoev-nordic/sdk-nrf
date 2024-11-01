@@ -29,12 +29,6 @@ LOG_MODULE_DECLARE(ras, CONFIG_BT_RAS_LOG_LEVEL);
 
 static struct ras_rd_buffer rd_buffer_pool[RD_BUFFER_COUNT];
 static sys_slist_t callback_list = SYS_SLIST_STATIC_INIT(&callback_list);
-static struct step_data_context {
-	uint16_t step_data_len;
-	uint8_t  current_step;
-	uint8_t *step_mode_buffer;
-	uint8_t *step_data_buffer;
-} step_data_context;
 
 static void notify_new_rd_stored(struct bt_conn *conn, uint16_t ranging_counter)
 {
@@ -139,7 +133,7 @@ static struct ras_rd_buffer *rd_buffer_alloc(struct bt_conn *conn, uint16_t rang
 	/* Overwrite the oldest stored ranging buffer that is not in use */
 	if (available_oldest_buffer != NULL) {
 		if (!available_oldest_buffer->acked) {
-			/* Buffer has been sent to peer, no need to notify */
+			/* Only notify if the peer has not read the buffer yet. */
 			notify_rd_overwritten(conn, oldest_ranging_counter);
 		}
 		rd_buffer_free(available_oldest_buffer);
@@ -153,13 +147,15 @@ static struct ras_rd_buffer *rd_buffer_alloc(struct bt_conn *conn, uint16_t rang
 	return NULL;
 }
 
-static bool process_step_data(struct bt_le_cs_subevent_step *step)
+static bool process_step_data(struct bt_le_cs_subevent_step *step, void *user_data)
 {
-	step_data_context.step_mode_buffer[step_data_context.current_step] = step->mode;
-	/* TODO: what about step->channel? */
-	memcpy(&step_data_context.step_data_buffer[step_data_context.step_data_len], step->data, step->data_len);
-	step_data_context.step_data_len += step->data_len;
-	step_data_context.current_step++;
+	struct ras_rd_buffer *buf = (struct ras_rd_buffer *)user_data;
+
+	buf->procedure.subevents[buf->subevent_cursor] = step->mode;
+	buf->subevent_cursor += BT_RAS_STEP_MODE_LEN;
+
+	memcpy(&buf->procedure.subevents[buf->subevent_cursor], step->data, step->data_len);
+	buf->subevent_cursor += step->data_len;
 
 	return true;
 }
@@ -179,8 +175,8 @@ static void subevent_data_available(struct bt_conn *conn, struct bt_conn_le_cs_s
 
 		buf->procedure.ranging_header.ranging_counter = result->header.procedure_counter;
 		buf->procedure.ranging_header.config_id = result->header.config_id;
-		buf->procedure.ranging_header.selected_tx_power = 0;  /* TODO */
-		buf->procedure.ranging_header.antenna_paths_mask = 1; /* TODO */
+		buf->procedure.ranging_header.selected_tx_power = 0;  /* TODO get from LE CS Procedure Enable Complete event */
+		buf->procedure.ranging_header.antenna_paths_mask = BIT_MASK(result->header.num_antenna_paths);
 	}
 
 	struct ras_subevent_header *hdr = (struct ras_subevent_header *) &buf->procedure.subevents[buf->subevent_cursor];
@@ -195,20 +191,8 @@ static void subevent_data_available(struct bt_conn *conn, struct bt_conn_le_cs_s
 	hdr->ref_power_level = result->header.reference_power_level;
 	hdr->num_steps_reported = result->header.num_steps_reported;
 
-	uint8_t *step_modes = &buf->procedure.subevents[buf->subevent_cursor];
-	buf->subevent_cursor += hdr->num_steps_reported * BT_RAS_STEP_MODE_LEN;
-
-	uint8_t *step_data = &buf->procedure.subevents[buf->subevent_cursor];
-
 	if (result->step_data_buf) {
-		step_data_context.current_step = 0;
-		step_data_context.step_data_len = 0;
-		step_data_context.step_mode_buffer = step_modes;
-		step_data_context.step_data_buffer = step_data;
-
-		bt_le_cs_step_data_parse(result->step_data_buf, process_step_data);
-
-		buf->subevent_cursor += step_data_context.step_data_len;
+		bt_le_cs_step_data_parse(result->step_data_buf, process_step_data, buf);
 	}
 
 	if (hdr->ranging_done_status == BT_CONN_LE_CS_PROCEDURE_COMPLETE) {
@@ -254,7 +238,7 @@ void data_timer_handler(struct k_timer *dummy)
 K_TIMER_DEFINE(data_timer, data_timer_handler, NULL);
 
 static void connected(struct bt_conn *conn, uint8_t err) {
-	k_timer_start(&data_timer, K_SECONDS(5), K_MSEC(500));
+	k_timer_start(&data_timer, K_SECONDS(5), K_MSEC(5000));
 	curr_conn = conn;
 }
 #endif
@@ -262,7 +246,9 @@ static void connected(struct bt_conn *conn, uint8_t err) {
 static void disconnected(struct bt_conn *conn, uint8_t reason)
 {
 	ARG_UNUSED(reason);
+#ifdef SEND_DUMMY_DATA
 	k_timer_stop(&data_timer);
+#endif
 
 	for (uint8_t i = 0; i < RD_BUFFER_COUNT; i++) {
 		if (rd_buffer_pool[i].conn == conn) {
@@ -343,5 +329,4 @@ void bt_ras_rd_buffer_rewind(struct ras_rd_buffer *buf, uint16_t data_len) {
 
 	__ASSERT_NO_MSG(buf->read_cursor >= data_len);
 	buf->read_cursor -= data_len;
-
 }
