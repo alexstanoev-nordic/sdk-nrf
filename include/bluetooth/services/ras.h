@@ -11,6 +11,7 @@
 #include <zephyr/kernel.h>
 #include <zephyr/bluetooth/conn.h>
 #include <zephyr/bluetooth/uuid.h>
+#include <bluetooth/gatt_dm.h>
 
 /** @file
  *  @defgroup bt_ras Ranging Service API
@@ -129,6 +130,82 @@ struct ras_subevent_header {
 	uint8_t num_steps_reported;
 } __packed;
 BUILD_ASSERT(sizeof(struct ras_subevent_header) == BT_RAS_SUBEVENT_HEADER_LEN);
+
+/** @brief Ranging data ready callback. Called when peer has ranging data available.
+ *
+ * @param[in] conn            Connection Object.
+ * @param[in] ranging_counter Ranging counter ready to be requested.
+ */
+typedef void (*bt_ras_rreq_rd_ready_cb_t)(struct bt_conn *conn, uint16_t ranging_counter);
+
+/** @brief Ranging data overwritted callback. Called when peer has overwritten previously available
+ * ranging data.
+ *
+ * @param[in] conn            Connection Object.
+ * @param[in] ranging_counter Ranging counter which has been overwritten.
+ */
+typedef void (*bt_ras_rreq_rd_overwritten_cb_t)(struct bt_conn *conn, uint16_t ranging_counter);
+
+/** @brief Ranging data get complete callback. Called when ranging data get procedure has completed.
+ *
+ * @param[in] conn            Connection Object.
+ * @param[in] ranging_counter Ranging counter which has been overwritten.
+ * @param[in] err             Error code, 0 if the ranging data get was successful. Otherwise a
+ * negative error code.
+ */
+typedef void (*bt_ras_rreq_ranging_data_get_complete_t)(struct bt_conn *conn,
+							uint16_t ranging_counter, int err);
+
+/** @brief Allocate a RREQ context and assign GATT handles. Takes a reference to the connection.
+ *
+ * @param[in] dm   Discovery Object.
+ * @param[in] conn Connection Object.
+ *
+ * @retval 0 If the operation was successful.
+ *           Otherwise, a negative error code is returned.
+ */
+int bt_ras_rreq_alloc_and_assign_handles(struct bt_gatt_dm *dm, struct bt_conn *conn);
+
+/** @brief Get ranging data for given ranging counter.
+ *
+ * @note This should only be called after receiving a ranging data ready callback and
+ * when subscribed to ondemand ranging data and RAS-CP.
+ *
+ * @param[in] conn                 Connection Object.
+ * @param[in] ranging_data_out     Simple buffer to store received ranging data.
+ * @param[in] ranging_counter      Ranging counter to get.
+ * @param[in] data_get_complete_cb Callback called when get ranging data completes.
+ *
+ * @retval 0 If the operation was successful.
+ *           Otherwise, a negative error code is returned.
+ */
+int bt_ras_rreq_cp_get_ranging_data(struct bt_conn *conn, struct net_buf_simple *ranging_data_out,
+				    uint16_t ranging_counter,
+				    bt_ras_rreq_ranging_data_get_complete_t data_get_complete_cb);
+
+/** @brief Free RREQ context for connection. Should be called from disconnected callback. This will
+ * unsubscribe from any remaining subscriptions.
+ *
+ * @param[in] conn Connection Object.
+ */
+void bt_ras_rreq_free(struct bt_conn *conn);
+
+/** @brief Subscribe to all required on-demand ranging data subscriptions. Subscribes to ranging
+ * data ready, ranging data overwritten, on-demand ranging data and RAS-CP.
+ *
+ * @param[in] conn              Connection Object.
+ * @param[in] rd_ready_cb       Callback called when ranging data ready notification has been
+ * received.
+ * @param[in] rd_overwritten_cb Callback called when ranging data overwritten notification has been
+ * received, unless get ranging data has already been called for this ranging counter where
+ * data_get_complete_cb will be called instead.
+ *
+ * @retval 0 If the operation was successful.
+ *           Otherwise, a negative error code is returned.
+ */
+int bt_ras_rreq_on_demand_ranging_data_subscribe_all(
+	struct bt_conn *conn, bt_ras_rreq_rd_ready_cb_t rd_ready_cb,
+	bt_ras_rreq_rd_overwritten_cb_t rd_overwritten_cb);
 
 #ifdef __cplusplus
 }
