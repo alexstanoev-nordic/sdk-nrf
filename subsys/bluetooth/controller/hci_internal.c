@@ -66,7 +66,9 @@ static bool command_generates_command_complete_event(uint16_t hci_opcode)
 	case SDC_HCI_OPCODE_CMD_LE_SUBRATE_REQUEST:
 #if defined(CONFIG_BT_CTLR_CHANNEL_SOUNDING)
 	case SDC_HCI_OPCODE_CMD_LE_CS_READ_REMOTE_SUPPORTED_CAPABILITIES:
+#if defined(CONFIG_BT_CENTRAL)
 	case SDC_HCI_OPCODE_CMD_LE_CS_SECURITY_ENABLE:
+#endif /* CONFIG_BT_CENTRAL */
 	case SDC_HCI_OPCODE_CMD_LE_CS_READ_REMOTE_FAE_TABLE:
 	case SDC_HCI_OPCODE_CMD_LE_CS_CREATE_CONFIG:
 	case SDC_HCI_OPCODE_CMD_LE_CS_REMOVE_CONFIG:
@@ -641,7 +643,9 @@ void hci_internal_supported_commands(sdc_hci_ip_supported_commands_t *cmds)
 	cmds->hci_le_cs_test = 1;
 	cmds->hci_le_cs_test_end = 1;
 #endif /* CONFIG_BT_CTLR_CHANNEL_SOUNDING_TEST */
+#if defined(CONFIG_BT_CENTRAL)
 	cmds->hci_le_cs_security_enable = 1;
+#endif /* CONFIG_BT_CENTRAL */
 	cmds->hci_le_cs_set_default_settings = 1;
 	cmds->hci_le_cs_set_channel_classification = 1;
 	cmds->hci_le_cs_set_procedure_parameters = 1;
@@ -1476,8 +1480,10 @@ static uint8_t le_controller_cmd_put(uint8_t const * const cmd,
 			sdc_hci_cmd_le_cs_write_cached_remote_supported_capabilities_return_t);
 		return sdc_hci_cmd_le_cs_write_cached_remote_supported_capabilities(
 			(void *)cmd_params, (void *)event_out_params);
+#if defined(CONFIG_BT_CENTRAL)
 	case SDC_HCI_OPCODE_CMD_LE_CS_SECURITY_ENABLE:
 		return sdc_hci_cmd_le_cs_security_enable((void *)cmd_params);
+#endif /* CONFIG_BT_CENTRAL */
 	case SDC_HCI_OPCODE_CMD_LE_CS_SET_DEFAULT_SETTINGS:
 		*param_length_out += sizeof(sdc_hci_cmd_le_cs_set_default_settings_return_t);
 		return sdc_hci_cmd_le_cs_set_default_settings((void *)cmd_params,
