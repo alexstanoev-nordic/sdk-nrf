@@ -1,0 +1,25 @@
+/*
+ * Copyright (c) 2026 Nordic Semiconductor
+ *
+ * SPDX-License-Identifier: LicenseRef-Nordic-5-Clause
+ */
+
+/* Enable the global IPCT instance that connects the short-range radio to
+ * the COEXC peripheral.
+ */
+&ipct10 {
+	status = "okay";
+	channels = <4>;
+	global-domain-id = <1>;
+	interrupts = <141 1>; /* Highest IRQ priority not reserved by MPSL. */
+};
+
+/ {
+	nrf_radio_coex: nrf-coexc-ipc {
+		status = "okay";
+		compatible = "nordic,nrf-coexc-ipc";
+		nordic,ipct = <&ipct10>;
+		rx-channels = <0 1>;
+		tx-channels = <2 3>;
+	};
+};

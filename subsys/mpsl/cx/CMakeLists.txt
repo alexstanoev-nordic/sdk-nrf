@@ -8,6 +8,7 @@ if(CONFIG_MPSL_CX_3WIRE OR
   CONFIG_MPSL_CX_1WIRE OR
   CONFIG_MPSL_CX_BT_1WIRE OR
   CONFIG_MPSL_CX_NRF700X OR
+  CONFIG_MPSL_CX_NRF_COEXC_IPC OR
   CONFIG_MPSL_CX_SOFTWARE
 )
   zephyr_library()
@@ -16,6 +17,14 @@ if(CONFIG_MPSL_CX_3WIRE OR
   zephyr_library_sources_ifdef(CONFIG_MPSL_CX_BT_1WIRE 1wire/mpsl_cx_1wire.c)
   zephyr_library_sources_ifdef(CONFIG_MPSL_CX_1WIRE 1wire/mpsl_cx_1wire.c)
   zephyr_library_sources_ifdef(CONFIG_MPSL_CX_NRF700X nrf700x/mpsl_cx_nrf700x.c)
+  zephyr_library_sources_ifdef(CONFIG_MPSL_CX_NRF_COEXC_IPC nrf_coexc_ipc/mpsl_cx_nrf_coexc_ipc.c)
+  if(CONFIG_MPSL_CX_NRF_COEXC_IPC AND CONFIG_NRF71_SR_COEX_DRIVER)
+    zephyr_library_include_directories(
+      ${ZEPHYR_NRF_MODULE_DIR}/drivers/nrf71_sr_coex/include
+      ${ZEPHYR_NRF_MODULE_DIR}/drivers/wifi/nrf71/inc
+      ${ZEPHYR_NRF_MODULE_DIR}/drivers/wifi/nrf71/inc/common/fw_if
+    )
+  endif()
   zephyr_library_sources_ifdef(CONFIG_MPSL_CX_SOFTWARE_RPC software/mpsl_cx_software_rpc.c)
 endif()
 
