@@ -6,6 +6,7 @@
 
 DT_COMPAT_CX_NRF70 := nordic,nrf7002-coex
 DT_COMPAT_CX_SOFTWARE := nordic,software-coex
+DT_COMPAT_CX_COEXC_IPC := nordic,nrf-coexc-ipc
 
 config MPSL_CX_ANY_SUPPORT
 	bool
@@ -24,6 +25,12 @@ config MPSL_CX_SOFTWARE_SUPPORT
 	default $(dt_nodelabel_has_compat,nrf_radio_coex,$(DT_COMPAT_CX_SOFTWARE))
 	help
 	  Indicates that the device tree contains a nrf_radio_coex node compatible with "nordic,software-coex".
+
+config MPSL_CX_NRF_COEXC_IPC_SUPPORT
+	bool
+	default $(dt_nodelabel_has_compat,nrf_radio_coex,$(DT_COMPAT_CX_COEXC_IPC))
+	help
+	  Indicates that the device tree contains a nrf_radio_coex node compatible with "nordic,nrf-coexc-ipc".
 
 config MPSL_CX
 	bool "Radio Coexistence interface support"
@@ -93,6 +100,15 @@ config MPSL_CX_1WIRE
 	help
 	  Radio Coexistence interface implementation using a simple one-wire PTA
 	  implementation for co-located radios.
+
+config MPSL_CX_NRF_COEXC_IPC
+	bool "Nordic COEXC IPC Coexistence"
+	depends on MPSL_CX_NRF_COEXC_IPC_SUPPORT
+	help
+	  Radio Coexistence interface implementation that communicates with the
+	  Nordic Coexistence Controller (COEXC) via the IPCT peripheral. Used on
+	  SoCs where the short-range radio shares the RF front-end with Wi-Fi
+	  through COEXC arbitration.
 
 config MPSL_CX_SOFTWARE
 	bool "Software Coexistence"

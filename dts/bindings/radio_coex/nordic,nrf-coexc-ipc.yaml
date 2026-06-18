@@ -1,0 +1,52 @@
+# Copyright (c) 2026 Nordic Semiconductor ASA
+# SPDX-License-Identifier: LicenseRef-Nordic-5-Clause
+
+description: |
+  COEXC (Coexistence Controller) IPC interface for the short-range radio subsystem.
+
+  The COEXC peripheral arbitrates RF access between Wi-Fi, short-range radios,
+  and external devices. Short-range radio clients communicate with COEXC
+  exclusively via IPCT. Each client is associated with two IPCT channels: one
+  for REQUEST (asserted by the radio) / GRANT (asserted by COEXC), and one for
+  RELEASE (asserted by the radio) / REVOKE (asserted by COEXC). REQUEST/GRANT
+  and RELEASE/REVOKE share the same channel index in each pair.
+
+  Two clients are allocated to the short-range radio: one for RX operations and
+  one for TX operations. tx-channels and rx-channels each carry the channel
+  indices for the respective operation as <request-channel release-channel>.
+
+compatible: "nordic,nrf-coexc-ipc"
+
+include: base.yaml
+
+properties:
+  nordic,ipct:
+    type: phandle
+    required: true
+    description: |
+      Phandle to the COEXC interface IPCT peripheral instance.
+
+  nordic,ipct-irq-index:
+    type: int
+    default: 0
+    description: |
+      Index into the referenced IPCT node's `interrupts` property identifying
+      the interrupt line.
+
+  rx-channels:
+    type: array
+    required: true
+    description: |
+      IPCT channel indices for the short-range RX radio client, as
+      <request-channel release-channel>. The radio asserts the request channel
+      to REQUEST an RX operation and receives GRANT on the same channel; it
+      asserts the release channel to RELEASE and receives REVOKE on it.
+
+  tx-channels:
+    type: array
+    required: true
+    description: |
+      IPCT channel indices for the short-range TX radio client, as
+      <request-channel release-channel>. The radio asserts the request channel
+      to REQUEST a TX operation and receives GRANT on the same channel; it
+      asserts the release channel to RELEASE and receives REVOKE on it.
